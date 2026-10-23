@@ -11,7 +11,7 @@ app.get('/', (req, res) => res.send('CEO-SİPARİŞ Botu Aktif!'));
 app.listen(PORT, () => console.log(`HTTP sunucusu ${PORT} portunda çalışıyor.`));
 
 // ADMIN NUMARAN (Kendi numaranı yaz)
-const ADMIN_NUMBER = "905335752836@s.whatsapp.net"; 
+const ADMIN_NUMBER = "905307853165@s.whatsapp.net"; 
 
 const DATA_FILE = path.join(__dirname, 'data.json');
 
