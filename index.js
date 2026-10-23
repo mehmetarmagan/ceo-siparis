@@ -1,219 +1,176 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const qrcode = require('qrcode-terminal');
-const http = require('http');
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
 
-// ================= RENDER PORT UYARISINI AŞMAK İÇİN MİNİ HTTP SUNUCUSU =================
+const app = express();
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('🚀 CEO-SİPARİŞ WhatsApp Botu Aktif ve Çalışıyor!\n');
-}).listen(PORT, () => {
-    console.log(`🌐 HTTP Sunucusu ${PORT} portunda aktif edildi.`);
-});
 
-// ================= SAHİP VE AYARLAR =================
-const MY_NUMBER = "905307853165@s.whatsapp.net"; 
-let IS_ACTIVE = true; 
+// Render 7/24 uyanık tutma web sunucusu
+app.get('/', (req, res) => res.send('CEO-SİPARİŞ Botu Aktif!'));
+app.listen(PORT, () => console.log(`HTTP sunucusu ${PORT} portunda çalışıyor.`));
 
-// ================= MENÜ KODLARI VE FİYATLAR =================
-const MENUS = {
-    // KÜÇÜK BOY PİZZALAR (Minimum 2 Adet)
-    'K1': { name: '2 Adet Küçük Boy Special Pizza', price: 250 },
-    'K2': { name: '2 Adet Küçük Boy Luna Pizza', price: 220 },
+// ADMIN NUMARAN (Kendi numaranı yaz)
+const ADMIN_NUMBER = "905335752836@s.whatsapp.net"; 
 
-    // ORTA BOY PİZZALAR
-    'O1': { name: '1 Adet Orta Boy Special Pizza', price: 200 },
-    'O2': { name: '2 Adet Orta Boy Luna Pizza', price: 190 },
+const DATA_FILE = path.join(__dirname, 'data.json');
 
-    // BÜYÜK BOY PİZZALAR (En Cazip Seçenek)
-    'B1': { name: '1 Adet Büyük Boy Special Pizza', price: 260 },
-    'B2': { name: '1 Adet Büyük Boy Gurme / Kavurmalı Pizza', price: 330 },
-
-    // HAMBURGER MENÜLERİ (Minimum 2 Adet)
-    'H1': { name: '2 Adet Pasaport Burger', price: 250 }
+let storeData = {
+  isClosed: false,
+  promoters: {
+    "Asude": { total_orders: 0, balance: 0 },
+    "Emin": { total_orders: 0, balance: 0 },
+    "Şeyma": { total_orders: 0, balance: 0 },
+    "Alper": { total_orders: 0, balance: 0 }
+  },
+  customers: {}, 
+  userStates: {}  
 };
 
+if (fs.existsSync(DATA_FILE)) {
+  try {
+    storeData = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
+  } catch (e) {
+    console.error("Veri okuma hatası, varsayılan yüklendi.");
+  }
+}
+
+function saveData() {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(storeData, null, 2));
+}
+
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('session_data');
-    
-    const sock = makeWASocket({
-        auth: state
-    });
+  const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: true
+  });
 
-    sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        
-        if (qr) {
-            console.log('📌 QR Kod Alındı, Lütfen WhatsApp ile Taratın:');
-            qrcode.generate(qr, { small: true });
+  sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect } = update;
+    if (connection === 'close') {
+      const shouldReconnect = (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut);
+      if (shouldReconnect) startBot();
+    } else if (connection === 'open') {
+      console.log('🚀 CEO-Sipariş Botu Bulutta Aktif!');
+    }
+  });
+
+  sock.ev.on('messages.upsert', async (m) => {
+    const msg = m.messages[0];
+    if (!msg.message || msg.key.fromMe) return;
+
+    const sender = msg.key.remoteJid;
+    const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").trim();
+    const lowerText = text.toLowerCase();
+
+    const cleanSender = sender.replace(':1', '');
+    const cleanAdmin = ADMIN_NUMBER.replace(':1', '');
+
+    // 🔴 1. ADMIN KOMUTLARI
+    if (cleanSender === cleanAdmin) {
+      if (lowerText === '!kapat') {
+        storeData.isClosed = true;
+        saveData();
+        await sock.sendMessage(sender, { text: "🔴 Dükkan siparişlere KAPATILDI." });
+        return;
+      }
+      if (lowerText === '!ac') {
+        storeData.isClosed = false;
+        saveData();
+        await sock.sendMessage(sender, { text: "🟢 Dükkan siparişlere AÇILDI." });
+        return;
+      }
+      if (lowerText === '!komisyonlar') {
+        let report = "📊 *GÜNCEL KOMİSYON BAKİYELERİ*\n\n";
+        for (const [name, info] of Object.entries(storeData.promoters)) {
+          report += `🔹 *${name}*: ${info.balance} TL (${info.total_orders} Sipariş)\n`;
         }
-
-        if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) startBot();
-        } else if (connection === 'open') {
-            console.log('🚀 Ceo-Siparis Botu Aktif! Diğer kategorisi eklendi.');
+        await sock.sendMessage(sender, { text: report });
+        return;
+      }
+      if (lowerText.startsWith('!sifirla ')) {
+        const name = text.split(' ')[1];
+        if (storeData.promoters[name]) {
+          storeData.promoters[name].balance = 0;
+          saveData();
+          await sock.sendMessage(sender, { text: `✅ ${name} bakiyesi sıfırlandı.` });
+        } else {
+          await sock.sendMessage(sender, { text: `❌ ${name} bulunamadı.` });
         }
-    });
+        return;
+      }
+    }
 
-    sock.ev.on('messages.upsert', async (m) => {
-        const msg = m.messages[0];
-        if (!msg.message || msg.key.fromMe) return;
+    // 🟡 2. DÜKKAN KAPALI KONTROLÜ
+    if (storeData.isClosed) {
+      await sock.sendMessage(sender, { text: "⛔ Şu an sipariş alımımız kapalıdır. Açıldığında duyuru yapılacaktır!" });
+      return;
+    }
 
-        const sender = msg.key.remoteJid;
-        const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || '').trim();
-        const cleanText = text.toLowerCase();
+    // 🟢 3. REFERANS & MENÜ AKIŞI
+    if (lowerText === 'referans') {
+      storeData.userStates[sender] = 'WAITING_REF';
+      saveData();
+      let refMsg = "👤 *Bizi size öneren kişiyi seçiniz:*\n\n";
+      let count = 1;
+      for (const name of Object.keys(storeData.promoters)) {
+        refMsg += `${count}️⃣ ${name}\n`;
+        count++;
+      }
+      refMsg += "\n_Lütfen ismi yazınız (Örn: Asude)_";
+      await sock.sendMessage(sender, { text: refMsg });
+      return;
+    }
 
-        // --- ADMIN YÖNETİM KOMUTLARI ---
-        if (sender === MY_NUMBER) {
-            if (text === '!kapat') {
-                IS_ACTIVE = false;
-                await sock.sendMessage(sender, { text: "🔴 Ceo-Siparis: Bot sipariş alımına KAPATILDI." });
-                return;
-            }
-            if (text === '!ac') {
-                IS_ACTIVE = true;
-                await sock.sendMessage(sender, { text: "🟢 Ceo-Siparis: Bot sipariş alımına AÇILDI." });
-                return;
-            }
-        }
+    if (storeData.userStates[sender] === 'WAITING_REF') {
+      const selectedName = Object.keys(storeData.promoters).find(n => n.toLowerCase() === lowerText);
+      if (selectedName) {
+        storeData.customers[sender] = selectedName;
+        delete storeData.userStates[sender];
+        saveData();
+        await sock.sendMessage(sender, { text: `✅ Referansınız *${selectedName}* olarak kaydedildi!\n\nSipariş vermek için *MENÜ* yazabilirsiniz.` });
+      } else {
+        await sock.sendMessage(sender, { text: "❌ Geçersiz isim. Lütfen listedeki isimlerden birini yazın (Asude, Emin, Şeyma, Alper):" });
+      }
+      return;
+    }
 
-        if (!IS_ACTIVE) {
-            await sock.sendMessage(sender, { text: "🔴 Şu anda sipariş alımımız kapalıdır. Aktif olduğumuzda tekrar bekleriz!" });
-            return;
-        }
+    if (lowerText === 'sa' || lowerText === 'merhaba' || lowerText === 'selam') {
+      let welcome = "👋 *CEO-SİPARİŞ'e Hoş Geldiniz!*\n\n";
+      if (storeData.customers[sender]) {
+        welcome += `📌 *Referansınız:* ${storeData.customers[sender]}\n\n`;
+      } else {
+        welcome += "🔹 Bizi size öneren biri varsa *REFERANS* yazabilirsiniz.\n\n";
+      }
+      welcome += "🍕 Menüyü ve fiyatları görmek için *MENÜ* yazmanız yeterlidir.";
+      await sock.sendMessage(sender, { text: welcome });
+      return;
+    }
 
-        // --- CANLI DESTEK ---
-        if (['destek', 'canlı destek', 'canli destek', 'yardım', 'yardim'].includes(cleanText)) {
-            await sock.sendMessage(sender, { text: "👨‍💻 *Canlı Destek Talebiniz Alındı!*\n\nTalebiniz yetkiliye iletilmiştir. En kısa sürede sizinle iletişime geçilecektir." });
-            await sock.sendMessage(MY_NUMBER, { text: `⚠️ *CEO-SİPARİŞ: CANLI DESTEK TALEBİ!*\n\n👤 *Müşteri:* +${sender.split('@')[0]}\n💬 *Mesaj:* "${text}"` });
-            return;
-        }
+    // Müşteri Menü İstediğinde
+    if (lowerText === 'menü' || lowerText === 'menu') {
+      const menuText = `🍕 *CEO-SİPARİŞ MENÜSÜ* 🍔\n\n` +
+        `🔴 *KÜÇÜK BOY PIZZALAR*\n` +
+        `*K1:* 2 Adet Küçük Special - 250 TL\n` +
+        `*K2:* 2 Adet Küçük Luna - 220 TL\n\n` +
+        `🟡 *ORTA BOY PIZZALAR*\n` +
+        `*O1:* 1 Adet Orta Special - 200 TL\n` +
+        `*O2:* 1 Adet Orta Gurme - 220 TL\n\n` +
+        `🟢 *BÜYÜK BOY PIZZALAR*\n` +
+        `*B1:* 1 Adet Büyük Special - 260 TL\n` +
+        `*B2:* 1 Adet Büyük Gurme - 330 TL\n\n` +
+        `🍔 *HAMBURGER*\n` +
+        `*H1:* 2 Adet Pasaport Burger - 250 TL\n\n` +
+        `Sipariş vermek istediğiniz menü kodunu ve adresinizi yazabilirsiniz!`;
+      
+      await sock.sendMessage(sender, { text: menuText });
+      return;
+    }
 
-        // --- 1. ADIM: İLK KARŞILAMA VE HOŞ GELDİN MESAJI ---
-        if (['sa', 'as', 'merhaba', 'selam', 'iyi günler', 'hayırlı işler', 'sahi'].includes(cleanText)) {
-            const welcomeMsg = `👋 *CEO-SİPARİŞ'e Hoş Geldiniz!*\n\n` +
-                               `Nallıhan Gece Acıkanlar Kulübü olarak sıcak ve indirimli lezzetleri kapınıza getiriyoruz.\n\n` +
-                               `📜 Menümüzü incelemek ve sipariş vermek için lütfen *MENÜ* yazıp gönderiniz.\n\n` +
-                               `⚠️ Sipariş verirken KYK'ya mı Pansiyona mı olduğunu belirtmeyi unutmayınız.`;
-            await sock.sendMessage(sender, { text: welcomeMsg });
-            return;
-        }
-
-        // --- 2. ADIM: KATEGORİ YÖNLENDİRME (MENÜ YAZINCA) ---
-        if (cleanText === 'menü' || cleanText === 'menu') {
-            const menuPrompt = `🍕 *Ne yemek isterdiniz?*\n\n` +
-                               `Lütfen incelemek istediğiniz menü için ilgili kelimeyi yazınız:\n\n` +
-                               `🔹 K. Pizza menüsü için 👉 *küçük*\n` +
-                               `🔹 O. Pizza menüsü için 👉 *orta*\n` +
-                               `🔹 B. Pizza menüsü için 👉 *büyük*\n` +
-                               `🔹 Hamburger menüsü için 👉 *hamburger*\n` +
-                               `🔹 Farklı bir isteğiniz varsa 👉 *diğer*\n\n` +
-                               `❓ Canlı destek için *DESTEK* yazabilirsiniz.`;
-            await sock.sendMessage(sender, { text: menuPrompt });
-            return;
-        }
-
-        // --- 3. ADIM: ALT MENÜLERİN AÇILMASI ---
-        if (cleanText === 'küçük' || cleanText === 'kucuk') {
-            const kMenu = `🍕 *KÜÇÜK BOY PİZZALAR*\n` +
-                          `⚠️ *Not:* Küçük boy pizzalar tek satılamamaktadır. Minimum 2 adet söylenebilir.\n\n` +
-                          `👉 *K1* - 2 Adet Küçük Boy Special Pizza: *250 TL*\n` +
-                          `👉 *K2* - 2 Adet Küçük Boy Luna Pizza: *220 TL*\n\n` +
-                          `📝 *Sipariş İçin:* Kod Ad Soyad Tel Adres (KYK/Pansiyon)\n` +
-                          `Örnek: *K1 Ahmet Yılmaz 05301234567 Pansiyon Oda 102*`;
-            await sock.sendMessage(sender, { text: kMenu });
-            return;
-        }
-
-        if (cleanText === 'orta') {
-            const oMenu = `🍕 *ORTA BOY PİZZALAR*\n\n` +
-                          `👉 *O1* - 1 Adet Orta Boy Special Pizza: *200 TL*\n` +
-                          `👉 *O2* - 2 Adet Orta Boy Luna Pizza: *190 TL*\n\n` +
-                          `📝 *Sipariş İçin:* Kod Ad Soyad Tel Adres (KYK/Pansiyon)\n` +
-                          `Örnek: *O1 Ahmet Yılmaz 05301234567 KYK Oda 5*`;
-            await sock.sendMessage(sender, { text: oMenu });
-            return;
-        }
-
-        if (cleanText === 'büyük' || cleanText === 'buyuk') {
-            const bMenu = `🍕 *BÜYÜK BOY PİZZALAR (EN ÇOK TERCİH EDİLEN)*\n\n` +
-                          `👉 *B1* - 1 Adet Büyük Boy Special Pizza: *260 TL* 🔥\n` +
-                          `👉 *B2* - 1 Adet Büyük Boy Gurme / Kavurmalı Pizza: *330 TL*\n\n` +
-                          `📝 *Sipariş İçin:* Kod Ad Soyad Tel Adres (KYK/Pansiyon)\n` +
-                          `Örnek: *B1 Ahmet Yılmaz 05301234567 KYK A Blok Oda 205*`;
-            await sock.sendMessage(sender, { text: bMenu });
-            return;
-        }
-
-        if (cleanText === 'hamburger') {
-            const hMenu = `🍔 *PASAPORT BURGER MENÜLERİ*\n` +
-                          `⚠️ *Not:* Hamburger menüleri minimum 2 adet ve 2'nin katları şeklinde sipariş edilebilir.\n\n` +
-                          `👉 *H1* - 2 Adet Pasaport Burger: *250 TL*\n\n` +
-                          `📝 *Sipariş İçin:* Kod Ad Soyad Tel Adres (KYK/Pansiyon)\n` +
-                          `Örnek: *H1 Ahmet Yılmaz 05301234567 Pansiyon Oda 12*`;
-            await sock.sendMessage(sender, { text: hMenu });
-            return;
-        }
-
-        // --- DİĞER İSTEKLER KATEGORİSİ ---
-        if (cleanText === 'diğer' || cleanText === 'diger') {
-            const otherMenu = `🍔🍕 *ÖZEL VEYA FARKLI SİPARİŞ İSTEĞİ*\n\n` +
-                               `Menüde göremediğiniz veya özel olarak istediğiniz (farklı pizza, tatlı, ekstra çıtır vb.) siparişleriniz için talebinizi ve adresinizi doğrudan yazabilirsiniz.\n\n` +
-                               `📝 *Örnek Format:*\n` +
-                               `*Özel İstek: 1 Adet Souffle ve 1 Orta Karışık Pizza, Ahmet Yılmaz 05301234567 Pansiyon Oda 8*\n\n` +
-                               `Mesajınızı yazdıktan sonra fiyat ve onay için size dönüş yapılacaktır.`;
-            await sock.sendMessage(sender, { text: otherMenu });
-            return;
-        }
-
-        // --- 4. ADIM: SİPARİŞ ALGILAMA VE BİLDİRİM ---
-        const firstWord = text.split(' ')[0].toUpperCase();
-        if (MENUS[firstWord]) {
-            const selectedMenu = MENUS[firstWord];
-            const details = text.replace(new RegExp(`^${firstWord}`, 'i'), '').trim();
-
-            if (!details) {
-                await sock.sendMessage(sender, { 
-                    text: `⚠️ Lütfen menü kodunun yanına Ad Soyad, Telefon ve Adres yazınız.\n\nÖrnek: *${firstWord} Ahmet Yılmaz 05301234567 Pansiyon Oda 4*` 
-                });
-                return;
-            }
-
-            const confirmText = `✅ *Sipariş Talebiniz Alındı!*\n\n` +
-                                `📦 *Seçilen Menü:* ${selectedMenu.name}\n` +
-                                `💰 *Ödenecek Tutar:* ${selectedMenu.price} TL\n` +
-                                `📋 *Detaylar:* ${details}\n\n` +
-                                `💳 *IBAN / Papara:* TR04 0006 2001 2830 0006 6572 61\n` +
-                                `*Alıcı:* Mehmet Armağan\n\n` +
-                                `⚠️ *Açıklamaya mutlaka Adınızı Soyadınızı yazınız.*\n` +
-                                `Nakit ödeme için mesaj atabilirsiniz.\nDekont attığınızda siparişiniz onaylanacaktır.`;
-            
-            await sock.sendMessage(sender, { text: confirmText });
-
-            const adminNotice = `🔔 *CEO-SİPARİŞ: YENİ SİPARİŞ!*\n\n` +
-                                `👤 *Müşteri WhatsApp:* +${sender.split('@')[0]}\n` +
-                                `🍕 *Sipariş:* ${selectedMenu.name} (${firstWord})\n` +
-                                `💵 *Tutar:* ${selectedMenu.price} TL\n` +
-                                `📍 *Adres & İletişim:* ${details}`;
-
-            await sock.sendMessage(MY_NUMBER, { text: adminNotice });
-            return;
-        }
-
-        // --- DİĞER/ÖZEL SİPARİŞ DETAYI ALGILAMA ---
-        if (cleanText.startsWith('özel istek:') || cleanText.startsWith('ozel istek:')) {
-            await sock.sendMessage(sender, { 
-                text: `✅ *Özel Sipariş Talebiniz Alındı!*\n\nİsteğiniz yetkiliye iletildi. Fiyatlandırma ve onay için en kısa sürede dönüş yapacağız.` 
-            });
-
-            await sock.sendMessage(MY_NUMBER, { 
-                text: `🔔 *CEO-SİPARİŞ: ÖZEL DİĞER TALEBİ!*\n\n👤 *Müşteri:* +${sender.split('@')[0]}\n💬 *Talep & Adres:* ${text}` 
-            });
-        }
-    });
+  });
 }
 
 startBot();
