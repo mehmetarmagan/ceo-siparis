@@ -6,32 +6,34 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Render 7/24 uyanık tutma web sunucusu
 app.get('/', (req, res) => res.send('CEO-SİPARİŞ Botu Aktif!'));
 app.listen(PORT, () => console.log(`HTTP sunucusu ${PORT} portunda çalışıyor.`));
 
-// ADMIN NUMARALARI (TR numaran ve WhatsApp arka plan ID'n)
 const ADMIN_NUMBERS = ["905307853165", "49482368602224"]; 
 
 const DATA_FILE = path.join(__dirname, 'data.json');
 
 let storeData = {
   isClosed: false,
+  lastOrderNum: 0, // Sıralı sipariş numarası sayacı
   promoters: {
-    "Asude": { total_orders: 0, balance: 0 },
     "Emin": { total_orders: 0, balance: 0 },
-    "Şeyma": { total_orders: 0, balance: 0 },
-    "Alper": { total_orders: 0, balance: 0 }
+    "Alper": { total_orders: 0, balance: 0 },
+    "Asude": { total_orders: 0, balance: 0 },
+    "Şeyma": { total_orders: 0, balance: 0 }
   },
   customers: {}, 
-  userStates: {}  
+  userStates: {},
+  pendingOrders: {} // Onay bekleyen siparişler (id: {...})
 };
 
 if (fs.existsSync(DATA_FILE)) {
   try {
     storeData = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
+    if (!storeData.pendingOrders) storeData.pendingOrders = {};
+    if (!storeData.lastOrderNum) storeData.lastOrderNum = 0;
   } catch (e) {
-    console.error("Veri okuma hatası, varsayılan yüklendi:", e);
+    console.error("Veri okuma hatası:", e);
   }
 }
 
@@ -43,12 +45,15 @@ function saveData() {
   }
 }
 
-// Menü Fiyat Haritası
-const menuPrices = {
-  "k1": 250, "k2": 220,
-  "o1": 200, "o2": 220,
-  "b1": 260, "b2": 330,
-  "h1": 250
+// Menü Fiyatları ve Menü Başına Net KÂR Haritası
+const menuDetails = {
+  "k1": { price: 250, profit: 80 },  // Örn: K1 satılınca net kâr 80 TL
+  "k2": { price: 220, profit: 70 },
+  "o1": { price: 200, profit: 60 },
+  "o2": { price: 220, profit: 70 },
+  "b1": { price: 260, profit: 90 },  // Örn: B1 net kârı 90 TL (%15 komisyon = ~14 TL)
+  "b2": { price: 330, profit: 110 },
+  "h1": { price: 250, profit: 80 }
 };
 
 async function startBot() {
@@ -60,17 +65,14 @@ async function startBot() {
 
   sock.ev.on('creds.update', saveCreds);
 
-  // 🔑 WHATSAPP EŞLEŞME KODU (Oturum kapalıysa kod üretir)
   if (!sock.authState.creds.registered) {
     setTimeout(async () => {
-      const botPhoneNumber = "905335752836"; // WhatsApp botunun bağlı olduğu numara
+      const botPhoneNumber = "905335752836"; 
       try {
         const code = await sock.requestPairingCode(botPhoneNumber);
-        console.log(`\n==================================`);
-        console.log(`🔑 WHATSAPP EŞLEŞME KODUNUZ: ${code}`);
-        console.log(`==================================\n`);
+        console.log(`\n🔑 WHATSAPP EŞLEŞME KODUNUZ: ${code}\n`);
       } catch (err) {
-        console.error("Eşleşme kodu alma hatası:", err);
+        console.error("Eşleşme kodu hatası:", err);
       }
     }, 4000);
   }
@@ -94,11 +96,10 @@ async function startBot() {
       const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").trim();
       const lowerText = text.toLowerCase();
 
-      // Esnek Admin Numarası Eşleştirme (Hem 90... Hem 49... Tanınır)
       const cleanSender = sender.replace(/[^0-9]/g, '');
       const isAdmin = ADMIN_NUMBERS.some(num => cleanSender.includes(num));
 
-      // 🔴 1. ADMIN KOMUTLARI
+      // 🔴 1. ADMIN KOMUTLARI & ÇOKLU ONAY SİSTEMİ
       if (isAdmin) {
         if (lowerText === '!kapat') {
           storeData.isClosed = true;
@@ -131,6 +132,43 @@ async function startBot() {
           }
           return;
         }
+
+        // TOPLU ONAY KOMUTU: !onayla 1,2,3 veya !onayla 1
+        if (lowerText.startsWith('!onayla ')) {
+          const rawIds = text.replace('!onayla', '').trim();
+          const orderIds = rawIds.split(',').map(id => id.trim());
+          let approvedList = [];
+
+          for (const orderId of orderIds) {
+            if (storeData.pendingOrders[orderId]) {
+              const order = storeData.pendingOrders[orderId];
+              
+              // Kâr üzerinden %15 Komisyon Hesabı
+              if (order.promoter && storeData.promoters[order.promoter]) {
+                const komisyon = Math.round(order.profit * 0.15);
+                storeData.promoters[order.promoter].balance += komisyon;
+                storeData.promoters[order.promoter].total_orders += 1;
+              }
+
+              // Müşteriye Onay Mesajı Gönder
+              await sock.sendMessage(order.sender, { 
+                text: `✅ *#${orderId}* Numaralı siparişiniz onaylandı!\n\nEn kısa sürede hazırlanıp adresinize teslim edilecektir. Afiyet olsun! 🍕` 
+              });
+
+              approvedList.push(orderId);
+              delete storeData.pendingOrders[orderId];
+            }
+          }
+
+          saveData();
+
+          if (approvedList.length > 0) {
+            await sock.sendMessage(sender, { text: `✅ *Sipariş(ler) Onaylandı:* #${approvedList.join(', #')}` });
+          } else {
+            await sock.sendMessage(sender, { text: "❌ Belirtilen sipariş numaraları bulunamadı veya zaten onaylanmış." });
+          }
+          return;
+        }
       }
 
       // 🟡 2. DÜKKAN KAPALI KONTROLÜ
@@ -149,7 +187,7 @@ async function startBot() {
           refMsg += `${count}️⃣ ${name}\n`;
           count++;
         }
-        refMsg += "\n_Lütfen ismi yazınız (Örn: Asude)_";
+        refMsg += "\n_Lütfen ismi yazınız (Örn: Emin)_";
         await sock.sendMessage(sender, { text: refMsg });
         return;
       }
@@ -162,7 +200,7 @@ async function startBot() {
           saveData();
           await sock.sendMessage(sender, { text: `✅ Referansınız *${selectedName}* olarak kaydedildi!\n\nSipariş vermek için *MENÜ* yazabilirsiniz.` });
         } else {
-          await sock.sendMessage(sender, { text: "❌ Geçersiz isim. Lütfen listedeki isimlerden birini yazın (Asude, Emin, Şeyma, Alper):" });
+          await sock.sendMessage(sender, { text: "❌ Geçersiz isim. Lütfen listedeki isimlerden birini yazın (Emin, Alper, Asude, Şeyma):" });
         }
         return;
       }
@@ -179,7 +217,6 @@ async function startBot() {
         return;
       }
 
-      // Müşteri Menü İstediğinde
       if (lowerText === 'menü' || lowerText === 'menu') {
         const menuText = `🍕 *CEO-SİPARİŞ MENÜSÜ* 🍔\n\n` +
           `🔴 *KÜÇÜK BOY PIZZALAR*\n` +
@@ -193,41 +230,48 @@ async function startBot() {
           `*B2:* 1 Adet Büyük Gurme - 330 TL\n\n` +
           `🍔 *HAMBURGER*\n` +
           `*H1:* 2 Adet Pasaport Burger - 250 TL\n\n` +
-          `Sipariş vermek istediğiniz menü kodunu ve adresinizi yazabilirsiniz!\n*(Örn: B1 KYK Mehmet Armağan 0533...)*`;
+          `Sipariş formatı:\n*Menü kodu , Ad Soyad , Numara , Adres*\n*(Örn: B1 , Mehmet Armağan , 0530... , KYK Erkek yurdu)*`;
         
         await sock.sendMessage(sender, { text: menuText });
         return;
       }
 
-      // 🍕 4. SİPARİŞ YAKALAMA KISMI (B1, O1, H1 vb.)
-      const firstWord = lowerText.split(' ')[0];
-      if (menuPrices[firstWord]) {
-        const fiyat = menuPrices[firstWord];
+      // 🍕 4. SİPARİŞ YAKALAMA VE SIRALI NO İLE DÜŞÜRME
+      const firstWord = lowerText.split(',')[0].trim().split(' ')[0];
+      if (menuDetails[firstWord]) {
+        const item = menuDetails[firstWord];
+        const refUser = storeData.customers[sender] || "Yok";
+
+        // Sipariş ID'sini 1 artır
+        storeData.lastOrderNum += 1;
+        const currentOrderId = storeData.lastOrderNum.toString();
+
+        // Bekleyen siparişe detaylı kaydet
+        storeData.pendingOrders[currentOrderId] = {
+          sender: sender,
+          text: text,
+          promoter: refUser,
+          price: item.price,
+          profit: item.profit
+        };
+        saveData();
         
-        // Müşteriye bilgi mesajı
+        // Müşteriye Sipariş No Bilgisi
         await sock.sendMessage(sender, { 
-          text: `✅ *Siparişiniz Alındı!*\n\nSeçtiğiniz Menü: *${firstWord.toUpperCase()}* (${fiyat} TL)\nAdresiniz kaydedildi, en kısa sürede hazırlanıp yola çıkacaktır!` 
+          text: `⏳ *Siparişiniz Alındı! (Sipariş No: #${currentOrderId})*\n\nSeçtiğiniz Menü: *${firstWord.toUpperCase()}* (${item.price} TL)\nSatıcı onayladığında size bilgi mesajı gelecektir.` 
         });
 
-        // Admine (Sana) Düşen Bildirim
-        const refUser = storeData.customers[sender] || "Yok";
-        const adminBildirim = `🚨 *YENİ SİPARİŞ DÜŞTÜ!* 🚨\n\n` +
+        // Admine Sipariş Numaralı Bildirim
+        const adminBildirim = `🚨 *YENİ SİPARİŞ DÜŞTÜ! (#${currentOrderId})* 🚨\n\n` +
+          `🆔 *Sipariş No:* #${currentOrderId}\n` +
           `👤 Müşteri: wa.me/${sender.split('@')[0]}\n` +
-          `📦 Sipariş Detayı: ${text}\n` +
+          `📦 İçerik: ${text}\n` +
           `📌 Referans: ${refUser}\n` +
-          `💰 Tutar: ${fiyat} TL`;
+          `💰 Tutar: ${item.price} TL\n\n` +
+          `✅ Onaylamak için yaz:\n\`!onayla ${currentOrderId}\``;
 
         const adminJid = "905307853165@s.whatsapp.net";
         await sock.sendMessage(adminJid, { text: adminBildirim });
-
-        // Komisyon Hesabı (%15)
-        if (storeData.customers[sender] && storeData.promoters[storeData.customers[sender]]) {
-          const promoterName = storeData.customers[sender];
-          const komisyon = Math.round(fiyat * 0.15);
-          storeData.promoters[promoterName].balance += komisyon;
-          storeData.promoters[promoterName].total_orders += 1;
-          saveData();
-        }
         return;
       }
 
