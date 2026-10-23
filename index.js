@@ -1,5 +1,15 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
+const http = require('http');
+
+// ================= RENDER PORT UYARISINI AŞMAK İÇİN MİNİ HTTP SUNUCUSU =================
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('🚀 CEO-SİPARİŞ WhatsApp Botu Aktif ve Çalışıyor!\n');
+}).listen(PORT, () => {
+    console.log(`🌐 HTTP Sunucusu ${PORT} portunda aktif edildi.`);
+});
 
 // ================= SAHİP VE AYARLAR =================
 const MY_NUMBER = "905307853165@s.whatsapp.net"; 
