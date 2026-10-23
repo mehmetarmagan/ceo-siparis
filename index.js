@@ -43,6 +43,14 @@ function saveData() {
   }
 }
 
+// Menü Fiyat Haritası
+const menuPrices = {
+  "k1": 250, "k2": 220,
+  "o1": 200, "o2": 220,
+  "b1": 260, "b2": 330,
+  "h1": 250
+};
+
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
   const sock = makeWASocket({
@@ -91,7 +99,7 @@ async function startBot() {
       const cleanAdmin = ADMIN_NUMBER.split('@')[0].split(':')[0];
 
       // 🔴 1. ADMIN KOMUTLARI
-      if (cleanSender === cleanAdmin) {
+      if (cleanSender.includes(cleanAdmin) || cleanAdmin.includes(cleanSender)) {
         if (lowerText === '!kapat') {
           storeData.isClosed = true;
           saveData();
@@ -126,7 +134,7 @@ async function startBot() {
       }
 
       // 🟡 2. DÜKKAN KAPALI KONTROLÜ
-      if (storeData.isClosed) {
+      if (storeData.isClosed && !cleanSender.includes(cleanAdmin)) {
         await sock.sendMessage(sender, { text: "⛔ Şu an sipariş alımımız kapalıdır. Açıldığında duyuru yapılacaktır!" });
         return;
       }
@@ -185,11 +193,43 @@ async function startBot() {
           `*B2:* 1 Adet Büyük Gurme - 330 TL\n\n` +
           `🍔 *HAMBURGER*\n` +
           `*H1:* 2 Adet Pasaport Burger - 250 TL\n\n` +
-          `Sipariş vermek istediğiniz menü kodunu ve adresinizi yazabilirsiniz!`;
+          `Sipariş vermek istediğiniz menü kodunu ve adresinizi yazabilirsiniz!\n*(Örn: B1 KYK Mehmet Armağan 0533...)*`;
         
         await sock.sendMessage(sender, { text: menuText });
         return;
       }
+
+      // 🍕 4. SİPARİŞ YAKALAMA KISMI (B1, O1, H1 vb.)
+      const firstWord = lowerText.split(' ')[0];
+      if (menuPrices[firstWord]) {
+        const fiyat = menuPrices[firstWord];
+        
+        // Müşteriye bilgi
+        await sock.sendMessage(sender, { 
+          text: `✅ *Siparişiniz Alındı!*\n\nSeçtiğiniz Menü: *${firstWord.toUpperCase()}* (${fiyat} TL)\nAdresiniz kaydedildi, en kısa sürede hazırlanıp yola çıkacaktır!` 
+        });
+
+        // Admine (Sana) Düşen Bildirim
+        const refUser = storeData.customers[sender] || "Yok";
+        const adminBildirim = `🚨 *YENİ SİPARİŞ DÜŞTÜ!* 🚨\n\n` +
+          `👤 Müşteri: wa.me/${sender.split('@')[0]}\n` +
+          `📦 Sipariş Detayı: ${text}\n` +
+          `📌 Referans: ${refUser}\n` +
+          `💰 Tutar: ${fiyat} TL`;
+
+        await sock.sendMessage(ADMIN_NUMBER, { text: adminBildirim });
+
+        // Komisyon Hesabı (%15)
+        if (storeData.customers[sender] && storeData.promoters[storeData.customers[sender]]) {
+          const promoterName = storeData.customers[sender];
+          const komisyon = Math.round(fiyat * 0.15);
+          storeData.promoters[promoterName].balance += komisyon;
+          storeData.promoters[promoterName].total_orders += 1;
+          saveData();
+        }
+        return;
+      }
+
     } catch (err) {
       console.error("Mesaj işleme hatası:", err);
     }
