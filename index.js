@@ -11,11 +11,14 @@ app.listen(PORT, () => console.log(`HTTP sunucusu ${PORT} portunda çalışıyor
 
 const ADMIN_NUMBERS = ["905307853165", "49482368602224"]; 
 
+// Kendi IBAN bilgini buraya girebilirsin
+const IBAN_BILGISI = "TR00 0000 0000 0000 0000 0000 00 (Mehmet Armağan - Banka Adı)";
+
 const DATA_FILE = path.join(__dirname, 'data.json');
 
 let storeData = {
   isClosed: false,
-  lastOrderNum: 0, // Sıralı sipariş numarası sayacı
+  lastOrderNum: 0,
   promoters: {
     "Emin": { total_orders: 0, balance: 0 },
     "Alper": { total_orders: 0, balance: 0 },
@@ -24,7 +27,7 @@ let storeData = {
   },
   customers: {}, 
   userStates: {},
-  pendingOrders: {} // Onay bekleyen siparişler (id: {...})
+  pendingOrders: {}
 };
 
 if (fs.existsSync(DATA_FILE)) {
@@ -45,15 +48,15 @@ function saveData() {
   }
 }
 
-// Menü Fiyatları ve Menü Başına Net KÂR Haritası
+// Tam Doğru İndirim ve Sepet Maliyeti Düşülmüş Net Kâr Haritası
 const menuDetails = {
-  "k1": { price: 250, profit: 80 },  // Örn: K1 satılınca net kâr 80 TL
-  "k2": { price: 220, profit: 70 },
-  "o1": { price: 200, profit: 60 },
-  "o2": { price: 220, profit: 70 },
-  "b1": { price: 260, profit: 90 },  // Örn: B1 net kârı 90 TL (%15 komisyon = ~14 TL)
-  "b2": { price: 330, profit: 110 },
-  "h1": { price: 250, profit: 80 }
+  "k1": { price: 250, profit: 50 },  // 250 - (80 + 120)
+  "k2": { price: 220, profit: 90 },  // 220 - (80 + 50)
+  "o1": { price: 200, profit: 70 },  // 200 - (80 + 50)
+  "o2": { price: 220, profit: 90 },  // 220 - (80 + 50) [450 TL Liste Fiyatı]
+  "b1": { price: 260, profit: 30 },  // 260 - (80 + 150)
+  "b2": { price: 330, profit: 50 },  // 330 - (80 + 200)
+  "h1": { price: 250, profit: 70 }   // 250 - (80 + 100)
 };
 
 async function startBot() {
@@ -99,7 +102,7 @@ async function startBot() {
       const cleanSender = sender.replace(/[^0-9]/g, '');
       const isAdmin = ADMIN_NUMBERS.some(num => cleanSender.includes(num));
 
-      // 🔴 1. ADMIN KOMUTLARI & ÇOKLU ONAY SİSTEMİ
+      // 🔴 1. ADMIN KOMUTLARI
       if (isAdmin) {
         if (lowerText === '!kapat') {
           storeData.isClosed = true;
@@ -133,7 +136,7 @@ async function startBot() {
           return;
         }
 
-        // TOPLU ONAY KOMUTU: !onayla 1,2,3 veya !onayla 1
+        // TOPLU ONAY: !onayla 1,2,3
         if (lowerText.startsWith('!onayla ')) {
           const rawIds = text.replace('!onayla', '').trim();
           const orderIds = rawIds.split(',').map(id => id.trim());
@@ -143,16 +146,16 @@ async function startBot() {
             if (storeData.pendingOrders[orderId]) {
               const order = storeData.pendingOrders[orderId];
               
-              // Kâr üzerinden %15 Komisyon Hesabı
+              // Net Kâr Üzerinden %15 Komisyon Hesabı
               if (order.promoter && storeData.promoters[order.promoter]) {
                 const komisyon = Math.round(order.profit * 0.15);
                 storeData.promoters[order.promoter].balance += komisyon;
                 storeData.promoters[order.promoter].total_orders += 1;
               }
 
-              // Müşteriye Onay Mesajı Gönder
+              // Müşteriye Onay Mesajı
               await sock.sendMessage(order.sender, { 
-                text: `✅ *#${orderId}* Numaralı siparişiniz onaylandı!\n\nEn kısa sürede hazırlanıp adresinize teslim edilecektir. Afiyet olsun! 🍕` 
+                text: `✅ *#${orderId}* Numaralı siparişiniz onaylandı ve ödemeniz alındı!\n\nEn kısa sürede hazırlanıp yola çıkacaktır. Afiyet olsun! 🍕` 
               });
 
               approvedList.push(orderId);
@@ -230,23 +233,24 @@ async function startBot() {
           `*B2:* 1 Adet Büyük Gurme - 330 TL\n\n` +
           `🍔 *HAMBURGER*\n` +
           `*H1:* 2 Adet Pasaport Burger - 250 TL\n\n` +
-          `Sipariş formatı:\n*Menü kodu , Ad Soyad , Numara , Adres*\n*(Örn: B1 , Mehmet Armağan , 0530... , KYK Erkek yurdu)*`;
+          `📝 *Sipariş Formatı:*\n` +
+          `*Menü kodu , Ad Soyad , Numara , Adres*\n\n` +
+          `📌 *Örnek Sipariş:*\n` +
+          `_B1 , Mehmet Armağan , 05307853165 , KYK Erkek yurdu 205_`;
         
         await sock.sendMessage(sender, { text: menuText });
         return;
       }
 
-      // 🍕 4. SİPARİŞ YAKALAMA VE SIRALI NO İLE DÜŞÜRME
+      // 🍕 4. SİPARİŞ YAKALAMA VE IBAN İLETME
       const firstWord = lowerText.split(',')[0].trim().split(' ')[0];
       if (menuDetails[firstWord]) {
         const item = menuDetails[firstWord];
         const refUser = storeData.customers[sender] || "Yok";
 
-        // Sipariş ID'sini 1 artır
         storeData.lastOrderNum += 1;
         const currentOrderId = storeData.lastOrderNum.toString();
 
-        // Bekleyen siparişe detaylı kaydet
         storeData.pendingOrders[currentOrderId] = {
           sender: sender,
           text: text,
@@ -256,19 +260,23 @@ async function startBot() {
         };
         saveData();
         
-        // Müşteriye Sipariş No Bilgisi
-        await sock.sendMessage(sender, { 
-          text: `⏳ *Siparişiniz Alındı! (Sipariş No: #${currentOrderId})*\n\nSeçtiğiniz Menü: *${firstWord.toUpperCase()}* (${item.price} TL)\nSatıcı onayladığında size bilgi mesajı gelecektir.` 
-        });
+        // Müşteriye IBAN Mesajı
+        const musteriMesaji = `⏳ *Siparişiniz Alındı! (Sipariş No: #${currentOrderId})*\n\n` +
+          `Seçtiğiniz Menü: *${firstWord.toUpperCase()}* (${item.price} TL)\n\n` +
+          `💳 *Ödeme Bilgileri (IBAN):*\n` +
+          `${IBAN_BILGISI}\n\n` +
+          `⚠️ *Önemli:* Lütfen yukarıdaki IBAN adresine ödemeyi yapıp dekontu gönderin. Ödemeniz kontrol edildikten sonra siparişiniz onaylanacaktır!`;
 
-        // Admine Sipariş Numaralı Bildirim
+        await sock.sendMessage(sender, { text: musteriMesaji });
+
+        // Admine Düşen Bildirim
         const adminBildirim = `🚨 *YENİ SİPARİŞ DÜŞTÜ! (#${currentOrderId})* 🚨\n\n` +
           `🆔 *Sipariş No:* #${currentOrderId}\n` +
           `👤 Müşteri: wa.me/${sender.split('@')[0]}\n` +
-          `📦 İçerik: ${text}\n` +
+          `📦 Sipariş Detayı: ${text}\n` +
           `📌 Referans: ${refUser}\n` +
-          `💰 Tutar: ${item.price} TL\n\n` +
-          `✅ Onaylamak için yaz:\n\`!onayla ${currentOrderId}\``;
+          `💰 Tutar: ${item.price} TL (IBAN Ödemesi Bekleniyor)\n\n` +
+          `✅ Onaylamak için:\n\`!onayla ${currentOrderId}\``;
 
         const adminJid = "905307853165@s.whatsapp.net";
         await sock.sendMessage(adminJid, { text: adminBildirim });
