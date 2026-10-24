@@ -11,7 +11,7 @@ app.listen(PORT, () => console.log(`HTTP sunucusu ${PORT} portunda çalışıyor
 
 const ADMIN_NUMBERS = ["905307853165", "49482368602224"]; 
 
-// Kendi IBAN bilgini buraya girebilirsin
+// Kendi IBAN Bilgini Buraya Yaz
 const IBAN_BILGISI = "TR00 0000 0000 0000 0000 0000 00 (Mehmet Armağan - Banka Adı)";
 
 const DATA_FILE = path.join(__dirname, 'data.json');
@@ -27,7 +27,8 @@ let storeData = {
   },
   customers: {}, 
   userStates: {},
-  pendingOrders: {}
+  pendingOrders: {},
+  lastGreetingTime: {} // Müşteri karşılama zamanları
 };
 
 if (fs.existsSync(DATA_FILE)) {
@@ -35,6 +36,7 @@ if (fs.existsSync(DATA_FILE)) {
     storeData = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
     if (!storeData.pendingOrders) storeData.pendingOrders = {};
     if (!storeData.lastOrderNum) storeData.lastOrderNum = 0;
+    if (!storeData.lastGreetingTime) storeData.lastGreetingTime = {};
   } catch (e) {
     console.error("Veri okuma hatası:", e);
   }
@@ -48,16 +50,23 @@ function saveData() {
   }
 }
 
-// Tam Doğru İndirim ve Sepet Maliyeti Düşülmüş Net Kâr Haritası
+// Net Kâr Haritası (Maliyetler Düşülmüş Halde)
 const menuDetails = {
-  "k1": { price: 250, profit: 50 },  // 250 - (80 + 120)
-  "k2": { price: 220, profit: 90 },  // 220 - (80 + 50)
-  "o1": { price: 200, profit: 70 },  // 200 - (80 + 50)
-  "o2": { price: 220, profit: 90 },  // 220 - (80 + 50) [450 TL Liste Fiyatı]
-  "b1": { price: 260, profit: 30 },  // 260 - (80 + 150)
-  "b2": { price: 330, profit: 50 },  // 330 - (80 + 200)
-  "h1": { price: 250, profit: 70 }   // 250 - (80 + 100)
+  "k1": { price: 250, profit: 50 },  
+  "k2": { price: 220, profit: 90 },  
+  "o1": { price: 200, profit: 70 },  
+  "o2": { price: 220, profit: 90 },  
+  "b1": { price: 260, profit: 30 },  
+  "b2": { price: 330, profit: 50 },  
+  "h1": { price: 250, profit: 70 }   
 };
+
+// Karşılama Kelimeleri Ve Yazım Hataları Listesi
+const GREETING_WORDS = [
+  'sa', 'sav', 'selam', 'selamun aleykum', 'selamün aleyküm', 'slm', 'sleam', 'selamlar', 
+  'merhaba', 'merhabalarr', 'mrb', 'iyi günler', 'iyi aksamlar', 'iyi akşamlar', 
+  'kolay gelsin', 'fiyat', 'fiyatlar', 'sipariş', 'siparis', 'helo', 'hello', 'hey'
+];
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
@@ -146,14 +155,12 @@ async function startBot() {
             if (storeData.pendingOrders[orderId]) {
               const order = storeData.pendingOrders[orderId];
               
-              // Net Kâr Üzerinden %15 Komisyon Hesabı
               if (order.promoter && storeData.promoters[order.promoter]) {
                 const komisyon = Math.round(order.profit * 0.15);
                 storeData.promoters[order.promoter].balance += komisyon;
                 storeData.promoters[order.promoter].total_orders += 1;
               }
 
-              // Müşteriye Onay Mesajı
               await sock.sendMessage(order.sender, { 
                 text: `✅ *#${orderId}* Numaralı siparişiniz onaylandı ve ödemeniz alındı!\n\nEn kısa sürede hazırlanıp yola çıkacaktır. Afiyet olsun! 🍕` 
               });
@@ -180,7 +187,7 @@ async function startBot() {
         return;
       }
 
-      // 🟢 3. REFERANS & MENÜ AKIŞI
+      // 🟢 3. REFERANS AKIŞI
       if (lowerText === 'referans') {
         storeData.userStates[sender] = 'WAITING_REF';
         saveData();
@@ -208,18 +215,7 @@ async function startBot() {
         return;
       }
 
-      if (lowerText === 'sa' || lowerText === 'merhaba' || lowerText === 'selam') {
-        let welcome = "👋 *CEO-SİPARİŞ'e Hoş Geldiniz!*\n\n";
-        if (storeData.customers[sender]) {
-          welcome += `📌 *Referansınız:* ${storeData.customers[sender]}\n\n`;
-        } else {
-          welcome += "🔹 Bizi size öneren biri varsa *REFERANS* yazabilirsiniz.\n\n";
-        }
-        welcome += "🍕 Menüyü ve fiyatları görmek için *MENÜ* yazmanız yeterlidir.";
-        await sock.sendMessage(sender, { text: welcome });
-        return;
-      }
-
+      // 🍕 4. MENÜ GÖSTERİMİ
       if (lowerText === 'menü' || lowerText === 'menu') {
         const menuText = `🍕 *CEO-SİPARİŞ MENÜSÜ* 🍔\n\n` +
           `🔴 *KÜÇÜK BOY PIZZALAR*\n` +
@@ -242,7 +238,7 @@ async function startBot() {
         return;
       }
 
-      // 🍕 4. SİPARİŞ YAKALAMA VE IBAN İLETME
+      // 🍕 5. SİPARİŞ YAKALAMA VE IBAN GÖNDERME
       const firstWord = lowerText.split(',')[0].trim().split(' ')[0];
       if (menuDetails[firstWord]) {
         const item = menuDetails[firstWord];
@@ -260,7 +256,6 @@ async function startBot() {
         };
         saveData();
         
-        // Müşteriye IBAN Mesajı
         const musteriMesaji = `⏳ *Siparişiniz Alındı! (Sipariş No: #${currentOrderId})*\n\n` +
           `Seçtiğiniz Menü: *${firstWord.toUpperCase()}* (${item.price} TL)\n\n` +
           `💳 *Ödeme Bilgileri (IBAN):*\n` +
@@ -269,7 +264,6 @@ async function startBot() {
 
         await sock.sendMessage(sender, { text: musteriMesaji });
 
-        // Admine Düşen Bildirim
         const adminBildirim = `🚨 *YENİ SİPARİŞ DÜŞTÜ! (#${currentOrderId})* 🚨\n\n` +
           `🆔 *Sipariş No:* #${currentOrderId}\n` +
           `👤 Müşteri: wa.me/${sender.split('@')[0]}\n` +
@@ -280,6 +274,29 @@ async function startBot() {
 
         const adminJid = "905307853165@s.whatsapp.net";
         await sock.sendMessage(adminJid, { text: adminBildirim });
+        return;
+      }
+
+      // 🟢 6. MÜŞTERİ KAÇIRMAMA KONTROLÜ (GREETING / MÜŞTERİİ KARŞILAMA)
+      // Eğer gelen mesaj bilinen bir karşılama kelimesiyse VEYA müşteri son 2 saatte ilk kez yazıyorsa:
+      const now = Date.now();
+      const lastGreeting = storeData.lastGreetingTime[sender] || 0;
+      const isGreetingWord = GREETING_WORDS.some(w => lowerText.includes(w));
+      const isTwoHoursPassed = (now - lastGreeting) > (2 * 60 * 60 * 1000); // 2 saat
+
+      if (isGreetingWord || isTwoHoursPassed) {
+        storeData.lastGreetingTime[sender] = now;
+        saveData();
+
+        let welcome = "👋 *CEO-SİPARİŞ'e Hoş Geldiniz!*\n\n";
+        if (storeData.customers[sender]) {
+          welcome += `📌 *Kaydedilen Referansınız:* ${storeData.customers[sender]}\n\n`;
+        } else {
+          welcome += "🔹 Bizi size öneren biri varsa *REFERANS* yazarak kaydebilirsiniz.\n\n";
+        }
+        welcome += "🍕 Menüyü ve fiyatları hemen görmek için *MENÜ* yazabilirsiniz!";
+        
+        await sock.sendMessage(sender, { text: welcome });
         return;
       }
 
