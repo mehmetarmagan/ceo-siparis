@@ -12,7 +12,7 @@ app.listen(PORT, () => console.log(`HTTP sunucusu ${PORT} portunda çalışıyor
 const ADMIN_NUMBERS = ["905307853165", "49482368602224"]; 
 
 // Kendi IBAN Bilgini Buraya Yaz
-const IBAN_BILGISI = "TR00 0000 0000 0000 0000 0000 00 (Mehmet Armağan - Banka Adı)";
+const IBAN_BILGISI = "TR04 0006 2001 2830 0006 6572 61 (Mehmet Armağan - Garanti Bankası)";
 
 const DATA_FILE = path.join(__dirname, 'data.json');
 
