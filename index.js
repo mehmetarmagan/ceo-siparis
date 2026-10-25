@@ -11,8 +11,9 @@ app.listen(PORT, () => console.log(`HTTP sunucusu ${PORT} portunda çalışıyor
 
 const ADMIN_NUMBERS = ["905307853165", "49482368602224"]; 
 
-// Kendi IBAN Bilgin
-const IBAN_BILGISI = "TR04 0006 2001 2830 0006 6572 61 (Mehmet Armağan - Garanti Bankası)";
+// Sadece IBAN Numarası (Kopyalaması Kolay Olsun Diye Saf Metin)
+const IBAN_NUMARASI = "TR04 0006 2001 2830 0006 6572 61";
+const IBAN_SAHIBI = "Mehmet Armağan - Garanti Bankası";
 
 const DATA_FILE = path.join(__dirname, 'data.json');
 
@@ -28,19 +29,14 @@ let storeData = {
         "Şeyma": { total_orders: 0, balance: 0 }
       }
     },
-    "Beypazarı": {
-      promoters: {
-        "Beypazarı Temsilcisi": { total_orders: 0, balance: 0 }
-      }
-    },
     "Diğer": {
       promoters: {}
     }
   },
-  customers: {}, // { sender: { region, promoter, otherLocation } }
+  customers: {}, // { sender: { region, promoter } }
   userStates: {}, 
-  pendingOrders: {}, 
-  customerActiveOrder: {}, 
+  pendingOrders: {}, // { orderId: { sender, text, region, promoter, price, profit } }
+  customerActiveOrders: {}, // { sender: [orderId1, orderId2, ...] } - Max 5 sipariş için dizi
   lastGreetingTime: {}
 };
 
@@ -49,11 +45,10 @@ if (fs.existsSync(DATA_FILE)) {
     storeData = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
     if (!storeData.pendingOrders) storeData.pendingOrders = {};
     if (!storeData.lastOrderNum) storeData.lastOrderNum = 0;
-    if (!storeData.customerActiveOrder) storeData.customerActiveOrder = {};
+    if (!storeData.customerActiveOrders) storeData.customerActiveOrders = {};
     if (!storeData.regions) {
       storeData.regions = {
         "Nallıhan": { promoters: { "Emin": {total_orders:0, balance:0}, "Alper": {total_orders:0, balance:0}, "Asude": {total_orders:0, balance:0}, "Şeyma": {total_orders:0, balance:0} } },
-        "Beypazarı": { promoters: { "Beypazarı Temsilcisi": {total_orders:0, balance:0} } },
         "Diğer": { promoters: {} }
       };
     }
@@ -186,11 +181,15 @@ async function startBot() {
               }
 
               await sock.sendMessage(order.sender, { 
-                text: `✅ *#${orderId}* Numaralı siparişiniz onaylandı ve ödemeniz alındı!\n\nEn kısa sürede hazırlanıp yola çıkacaktır. Afiyet olsun! 🍕\n\nInstagram: @ceosiparis` 
+                text: `✅ *#${orderId}* Numaralı siparişiniz onaylandı ve ödemeniz alındı!\n\n⏳ Siparişiniz ortalama *30 dakika* içinde kapınızda olacaktır. Kuryelerimiz sizi telefonla aramayacaktır, lütfen kapıda bekleyin!\n\nAfiyet olsun! 🍕\nInstagram: @ceosiparis` 
               });
 
-              if (storeData.customerActiveOrder[order.sender] === orderId) {
-                delete storeData.customerActiveOrder[order.sender];
+              // Aktif sipariş listesinden çıkar
+              if (storeData.customerActiveOrders[order.sender]) {
+                storeData.customerActiveOrders[order.sender] = storeData.customerActiveOrders[order.sender].filter(id => id !== orderId);
+                if (storeData.customerActiveOrders[order.sender].length === 0) {
+                  delete storeData.customerActiveOrders[order.sender];
+                }
               }
 
               approvedList.push(orderId);
@@ -215,14 +214,14 @@ async function startBot() {
         return;
       }
 
-      // 🛠️ 3. DESTEK SİSTEMİ (!destek)
+      // 🛠️ 3. DESTEK SİSTEMİ (!destek) - DÜZELTİLDİ (Sürekli mesaj atma engellendi)
       if (lowerText === '!destek' || lowerText === 'destek') {
         storeData.userStates[sender] = 'IN_SUPPORT';
         saveData();
-        await sock.sendMessage(sender, { text: "🛟 *Destek Hattına Bağlandınız.*\n\nLütfen sorununuzu veya talebinizi yazın, yetkili arkadaşlar en kısa sürede sizinle ilgilenecektir." });
+        await sock.sendMessage(sender, { text: "🛟 *Destek Hattına Bağlandınız.*\n\nLütfen sorununuzu veya talebinizi yazın, yetkili arkadaşlar en kısa sürede sizinle ilgilenecektir.\n\n_Destekten çıkmak için **!kapatdestek** yazabilirsiniz._" });
         
         const adminJid = "905307853165@s.whatsapp.net";
-        await sock.sendMessage(adminJid, { text: `🛟 *DESTEK TALEBİ!*\n👤 Kullanıcı: wa.me/${sender.split('@')[0]}\nMesaj: ${text}` });
+        await sock.sendMessage(adminJid, { text: `🛟 *DESTEK TALEBİ BAŞLATILDI!*\n👤 Kullanıcı: wa.me/${sender.split('@')[0]}\nMesaj: ${text}` });
         return;
       }
 
@@ -230,13 +229,13 @@ async function startBot() {
         if (lowerText === '!kapatdestek') {
           delete storeData.userStates[sender];
           saveData();
-          await sock.sendMessage(sender, { text: "✅ Destek oturumu sonlandırıldı." });
+          await sock.sendMessage(sender, { text: "✅ Destek oturumu sonlandırıldı. Normal menü akışına dönebilirsiniz." });
           return;
         }
+        // Kullanıcı destek modundayken her mesajına bot "iletildi" spam'i atmasın, admine iletsin ve sessizce kalsın
         const adminJid = "905307853165@s.whatsapp.net";
-        await sock.sendMessage(adminJid, { text: `🛟 *DESTEK MESAJI (wa.me/${sender.split('@')[0]}):*\n${text}` });
-        await sock.sendMessage(sender, { text: "✅ Mesajınız yetkiliye iletildi, dönüş bekleniyor..." });
-        return;
+        await sock.sendMessage(adminJid, { text: `🛟 *DESTEK (wa.me/${sender.split('@')[0]}):*\n${text}` });
+        return; // Bot burada durur, kullanıcıya sürekli spam mesaj atmaz!
       }
 
       // 🌍 4. "DİĞER" BÖLGE KONUM ALMA AKIŞI
@@ -249,24 +248,32 @@ async function startBot() {
 
         await sock.sendMessage(sender, { text: `✅ Konum/Bölge bilginiz (*${locationText}*) alındı!\n\nYetkili ekibimiz inceleyip size özel dönüş yapacaktır. Sabrınız için teşekkürler!\nInstagram: @ceosiparis` });
 
-        // Admine bildir
         const adminJid = "905307853165@s.whatsapp.net";
-        await sock.sendMessage(adminJid, { text: `🌍 *DİĞER BÖLGEDEN ÖZEL TALEP!* 🌍\n👤 Müşteri: wa.me/${sender.split('@')[0]}\n📍 Belirttiği Konum/Bölge: *${locationText}*\n\n_Bu kullanıcıya özel fiyat/şart belirleyip dönüş yapabilirsiniz._` });
+        await sock.sendMessage(adminJid, { text: `🌍 *DİĞER BÖLGEDEN ÖZEL TALEP!* 🌍\n👤 Müşteri: wa.me/${sender.split('@')[0]}\n📍 Belirttiği Konum/Bölge: *${locationText}*` });
         return;
       }
 
       // ❌ 5. MÜŞTERİ İPTAL SİSTEMİ (!iptal)
       if (lowerText === '!iptal') {
-        const activeOrderId = storeData.customerActiveOrder[sender];
-        if (activeOrderId && storeData.pendingOrders[activeOrderId]) {
-          delete storeData.pendingOrders[activeOrderId];
-          delete storeData.customerActiveOrder[sender];
+        const activeOrders = storeData.customerActiveOrders[sender] || [];
+        if (activeOrders.length > 0) {
+          // En son verilen aktif siparişi iptal et
+          const latestOrderId = activeOrders[activeOrders.length - 1];
+          
+          if (storeData.pendingOrders[latestOrderId]) {
+            delete storeData.pendingOrders[latestOrderId];
+          }
+
+          storeData.customerActiveOrders[sender] = activeOrders.filter(id => id !== latestOrderId);
+          if (storeData.customerActiveOrders[sender].length === 0) {
+            delete storeData.customerActiveOrders[sender];
+          }
           saveData();
 
-          await sock.sendMessage(sender, { text: `❌ *#${activeOrderId}* numaralı siparişiniz başarıyla iptal edildi.` });
+          await sock.sendMessage(sender, { text: `❌ *#${latestOrderId}* numaralı siparişiniz başarıyla iptal edildi.` });
 
           const adminJid = "905307853165@s.whatsapp.net";
-          await sock.sendMessage(adminJid, { text: `⚠️ *SİPARİŞ İPTAL EDİLDİ!* (#${activeOrderId})\nMüşteri: wa.me/${sender.split('@')[0]}` });
+          await sock.sendMessage(adminJid, { text: `⚠️ *SİPARİŞ İPTAL EDİLDİ!* (#${latestOrderId})\nMüşteri: wa.me/${sender.split('@')[0]}` });
         } else {
           await sock.sendMessage(sender, { text: "❌ İptal edilecek aktif veya onay bekleyen bir siparişiniz bulunmamaktadır." });
         }
@@ -279,8 +286,7 @@ async function startBot() {
         saveData();
         let regionMsg = "📍 *Lütfen Bulunduğunuz Bölgeyi Seçin:*\n\n" +
           "1️⃣ Nallıhan\n" +
-          "2️⃣ Beypazarı\n" +
-          "3️⃣ Diğer\n\n" +
+          "2️⃣ Diğer\n\n" +
           "_Lütfen bölge adını yazınız (Örn: Nallıhan)_";
         await sock.sendMessage(sender, { text: regionMsg });
         return;
@@ -292,7 +298,7 @@ async function startBot() {
           if (!storeData.customers[sender]) storeData.customers[sender] = {};
           storeData.customers[sender].region = selectedRegion;
 
-          if (selectedRegion === 'Nallıhan' || selectedRegion === 'Beypazarı') {
+          if (selectedRegion === 'Nallıhan') {
             storeData.userStates[sender] = 'WAITING_REF';
             saveData();
             let refMsg = `👤 *${selectedRegion} Bölgesi İçin Referans Seçiniz:*\n\n`;
@@ -305,13 +311,12 @@ async function startBot() {
             refMsg += "\n_Lütfen ismi yazınız (Yoksa 'Yok' yazabilirsiniz)_";
             await sock.sendMessage(sender, { text: refMsg });
           } else if (selectedRegion === 'Diğer') {
-            // DİĞER SEÇİLİRSE DOĞRUDAN KONUM SORMA ADIMINA BAĞLA
             storeData.userStates[sender] = 'WAITING_OTHER_LOCATION';
             saveData();
-            await sock.sendMessage(sender, { text: "📍 Bölgeniz *Diğer* olarak işaretlendi.\n\nLütfen bulunduğunuz yeri / konumu yazar mısınız? (Sizinle özel olarak ilgileneceğiz):" });
+            await sock.sendMessage(sender, { text: "📍 Bölgeniz *Diğer* olarak işaretlendi.\n\nLütfen bulunduğunuz yeri / konumu yazar mısınız?:" });
           }
         } else {
-          await sock.sendMessage(sender, { text: "❌ Geçersiz bölge. Lütfen (Nallıhan, Beypazarı, Diğer) yazın:" });
+          await sock.sendMessage(sender, { text: "❌ Geçersiz bölge. Lütfen (Nallıhan, Diğer) yazın:" });
         }
         return;
       }
@@ -333,20 +338,20 @@ async function startBot() {
           storeData.customers[sender].promoter = selectedName;
           delete storeData.userStates[sender];
           saveData();
-          await sock.sendMessage(sender, { text: `✅ Referansınız *${selectedName}* (${currentRegion}) olarak kaydedildi!\n\nSipariş vermek için *MENÜ* yazabilirsiniz.` });
+          await sock.sendMessage(sender, { text: `✅ Referansınız *${selectedName}* olarak kaydedildi!\n\nSipariş vermek için *MENÜ* yazabilirsiniz.` });
         } else {
           await sock.sendMessage(sender, { text: `❌ Geçersiz isim. Lütfen listeden birini seçin veya 'Yok' yazın:` });
         }
         return;
       }
 
-      // 🍕 7. MENÜ GÖSTERİMİ (Sadece Nallıhan / Beypazarı için mantıklı)
+      // 🍕 7. MENÜ GÖSTERİMİ
       if (lowerText === 'menü' || lowerText === 'menu') {
         const userCust = storeData.customers[sender] || {};
         const userRegion = userCust.region || "Seçilmemiş";
 
         if (userRegion === 'Diğer') {
-          await sock.sendMessage(sender, { text: `⚠️ Seçtiğiniz bölge (*Diğer*) için standart menümüz bulunmamaktadır. Konumunuzu belirttiyseniz yetkilinin dönüşünü bekleyebilir veya *!destek* yazarak doğrudan iletişime geçebilirsiniz.` });
+          await sock.sendMessage(sender, { text: `⚠️ Seçtiğiniz bölge (*Diğer*) için standart menümüz bulunmamaktadır. *!destek* yazarak doğrudan iletişime geçebilirsiniz.` });
           return;
         }
 
@@ -365,25 +370,29 @@ async function startBot() {
           `*H1:* 2 Adet Pasaport Burger - 250 TL\n\n` +
           `📝 *Sipariş Formatı:*\n` +
           `*Menü kodu , Ad Soyad , Numara , Adres*\n\n` +
-          `💡 *İpucu:* Sipariş verdikten sonra iptal için \`!iptal\` yazabilirsiniz.\n` +
+          `📌 *Örnek Sipariş:*\n` +
+          `_B1 , Mehmet Armağan , 05307853165 , KYK Yurdu 205_\n\n` +
+          `💡 *Bilgi:* Siparişler ortalama *30 dakika* içinde kapınızda olur. Arama yapılmaz, kapıda bekleyiniz!\n` +
           `📸 Instagram: @ceosiparis`;
         
         await sock.sendMessage(sender, { text: menuText });
         return;
       }
 
-      // 🍕 8. SİPARİŞ YAKALAMA VE IBAN GÖNDERME
+      // 🍕 8. SİPARİŞ YAKALAMA VE AYRI IBAN GÖNDERME (MAX 5 SİPARİŞ)
       const firstWord = lowerText.split(',')[0].trim().split(' ')[0];
       if (menuDetails[firstWord]) {
         const userCust = storeData.customers[sender] || { region: "Nallıhan", promoter: "Yok" };
 
         if (userCust.region === 'Diğer') {
-          await sock.sendMessage(sender, { text: `❌ 'Diğer' bölgesinden standart menü siparişi verilemez. Lütfen özel talebiniz için *!destek* yazın.` });
+          await sock.sendMessage(sender, { text: `❌ 'Diğer' bölgesinden standart menü siparişi verilemez. Lütfen *!destek* yazın.` });
           return;
         }
 
-        if (storeData.customerActiveOrder[sender] && storeData.pendingOrders[storeData.customerActiveOrder[sender]]) {
-          await sock.sendMessage(sender, { text: `⚠️ Zaten onay bekleyen aktif bir siparişiniz var (#${storeData.customerActiveOrder[sender]}). İptal etmek için \`!iptal\` yazabilirsiniz.` });
+        // Max 5 sipariş kontrolü
+        if (!storeData.customerActiveOrders[sender]) storeData.customerActiveOrders[sender] = [];
+        if (storeData.customerActiveOrders[sender].length >= 5) {
+          await sock.sendMessage(sender, { text: `⚠️ Aynı anda en fazla *5 aktif sipariş* verebilirsiniz. Lütfen mevcut siparişlerinizin onaylanmasını veya iptal edilmesini bekleyin.` });
           return;
         }
 
@@ -400,19 +409,22 @@ async function startBot() {
           profit: item.profit
         };
 
-        storeData.customerActiveOrder[sender] = currentOrderId;
+        storeData.customerActiveOrders[sender].push(currentOrderId);
         saveData();
         
+        // 1. Mesaj: Sipariş alındı ve süre/arama uyarısı
         const musteriMesaji = `⏳ *Siparişiniz Alındı! (Sipariş No: #${currentOrderId})*\n\n` +
-          `Seçtiğiniz Menü: *${firstWord.toUpperCase()}* (${item.price} TL)\n` +
-          `🌍 Bölge: ${userCust.region}\n\n` +
-          `💳 *Ödeme Bilgileri (IBAN):*\n` +
-          `${IBAN_BILGISI}\n\n` +
-          `⚠️ *Önemli:* Ödemeyi yapıp dekontu iletin. Vazgeçerseniz \`!iptal\` yazabilirsiniz!\n\n` +
-          `📸 Instagram: @ceosiparis`;
+          `Seçtiğiniz Menü: *${firstWord.toUpperCase()}* (${item.price} TL)\n\n` +
+          `⏱️ *Teslimat Bilgisi:* Siparişiniz ortalama *30 dakika* içinde kapınızda olacaktır. Sizi telefonla aramayacağız, lütfen kapıda bekleyin!\n\n` +
+          `💳 Aşağıdaki IBAN'a ödemeyi yapıp dekontu gönderin:`;
 
         await sock.sendMessage(sender, { text: musteriMesaji });
 
+        // 2. Mesaj: Sadece IBAN (Kopyalaması Kolay Ayrı Baloncuk)
+        await sock.sendMessage(sender, { text: IBAN_NUMARASI });
+        await sock.sendMessage(sender, { text: `📌 Alıcı / Banka: ${IBAN_SAHIBI}` });
+
+        // Admine Bildirim
         const adminBildirim = `🚨 *YENİ SİPARİŞ DÜŞTÜ! (#${currentOrderId})* 🚨\n\n` +
           `🆔 *Sipariş No:* #${currentOrderId}\n` +
           `👤 Müşteri: wa.me/${sender.split('@')[0]}\n` +
@@ -438,11 +450,11 @@ async function startBot() {
         storeData.lastGreetingTime[sender] = now;
         saveData();
 
-        let welcome = "👋 *CEO-SİPARİŞ'e Hoş Geldiniz!*\n\n";
+        let welcome = "👋 *CEO-SİPARİŞ'e Hoş Geldiniz!*\n\niss";
         if (storeData.customers[sender] && storeData.customers[sender].region) {
           welcome += `📍 Bölge: *${storeData.customers[sender].region}*\n`;
         } else {
-          welcome += "🔹 Bölge seçmek ve kaydolmak için *BÖLGE* yazabilirsiniz.\n\n";
+          welcome += "🔹 Bölge seçmek için *BÖLGE* yazabilirsiniz.\n\n";
         }
         welcome += "🍕 Menüyü görmek için *MENÜ*, destek için *DESTEK* yazabilirsiniz!\n";
         welcome += "📸 Instagram: @ceosiparis";
