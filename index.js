@@ -359,15 +359,15 @@ async function startBot() {
           `📍 Bölge: *${userRegion}*\n\n` +
           `🔴 *KÜÇÜK BOY PIZZALAR*\n` +
           `*K1:* 2 Adet Küçük Special - 250 TL\n` +
-          `*K2:* 2 Adet Küçük Luna - 220 TL\n\n` +
+          `*K2:* 2 Adet Küçük Luna - 230 TL\n\n` +
           `🟡 *ORTA BOY PIZZALAR*\n` +
-          `*O1:* 1 Adet Orta Special - 200 TL\n` +
-          `*O2:* 1 Adet Orta Gurme - 220 TL\n\n` +
+          `*O1:* 1 Adet Orta Special - 210 TL\n` +
+          `*O2:* 1 Adet Orta Gurme - 230 TL\n\n` +
           `🟢 *BÜYÜK BOY PIZZALAR*\n` +
-          `*B1:* 1 Adet Büyük Special - 260 TL\n` +
-          `*B2:* 1 Adet Büyük Gurme - 330 TL\n\n` +
+          `*B1:* 1 Adet Büyük Special - 290 TL\n` +
+          `*B2:* 1 Adet Büyük Gurme - 350 TL\n\n` +
           `🍔 *HAMBURGER*\n` +
-          `*H1:* 2 Adet Pasaport Burger - 250 TL\n\n` +
+          `*H1:* 2 Adet Pasaport Burger - 240 TL\n\n` +
           `📝 *Sipariş Formatı:*\n` +
           `*Menü kodu , Ad Soyad , Numara , Adres*\n\n` +
           `📌 *Örnek Sipariş:*\n` +
