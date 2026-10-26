@@ -33,10 +33,10 @@ let storeData = {
       promoters: {}
     }
   },
-  customers: {}, // { sender: { region, promoter } }
+  customers: {}, 
   userStates: {}, 
-  pendingOrders: {}, // { orderId: { sender, text, region, promoter, price, profit } }
-  customerActiveOrders: {}, // { sender: [orderId1, orderId2, ...] } - Max 5 sipariş için dizi
+  pendingOrders: {}, 
+  customerActiveOrders: {}, 
   lastGreetingTime: {}
 };
 
@@ -65,14 +65,15 @@ function saveData() {
   }
 }
 
+// Güncel Fiyatlar ve Kâr Marjları
 const menuDetails = {
   "k1": { price: 250, profit: 50 },  
-  "k2": { price: 220, profit: 90 },  
-  "o1": { price: 200, profit: 70 },  
-  "o2": { price: 220, profit: 90 },  
-  "b1": { price: 260, profit: 30 },  
-  "b2": { price: 330, profit: 50 },  
-  "h1": { price: 250, profit: 70 }   
+  "k2": { price: 230, profit: 90 },  
+  "o1": { price: 210, profit: 70 },  
+  "o2": { price: 230, profit: 90 },  
+  "b1": { price: 290, profit: 30 },  
+  "b2": { price: 350, profit: 50 },  
+  "h1": { price: 240, profit: 70 }   
 };
 
 const GREETING_WORDS = [
@@ -184,7 +185,6 @@ async function startBot() {
                 text: `✅ *#${orderId}* Numaralı siparişiniz onaylandı ve ödemeniz alındı!\n\n⏳ Siparişiniz ortalama *30 dakika* içinde kapınızda olacaktır. Kuryelerimiz sizi telefonla aramayacaktır, lütfen kapıda bekleyin!\n\nAfiyet olsun! 🍕\nInstagram: @ceosiparis` 
               });
 
-              // Aktif sipariş listesinden çıkar
               if (storeData.customerActiveOrders[order.sender]) {
                 storeData.customerActiveOrders[order.sender] = storeData.customerActiveOrders[order.sender].filter(id => id !== orderId);
                 if (storeData.customerActiveOrders[order.sender].length === 0) {
@@ -214,7 +214,7 @@ async function startBot() {
         return;
       }
 
-      // 🛠️ 3. DESTEK SİSTEMİ (!destek) - DÜZELTİLDİ (Sürekli mesaj atma engellendi)
+      // 🛠️ 3. DESTEK SİSTEMİ (!destek)
       if (lowerText === '!destek' || lowerText === 'destek') {
         storeData.userStates[sender] = 'IN_SUPPORT';
         saveData();
@@ -232,10 +232,9 @@ async function startBot() {
           await sock.sendMessage(sender, { text: "✅ Destek oturumu sonlandırıldı. Normal menü akışına dönebilirsiniz." });
           return;
         }
-        // Kullanıcı destek modundayken her mesajına bot "iletildi" spam'i atmasın, admine iletsin ve sessizce kalsın
         const adminJid = "905307853165@s.whatsapp.net";
         await sock.sendMessage(adminJid, { text: `🛟 *DESTEK (wa.me/${sender.split('@')[0]}):*\n${text}` });
-        return; // Bot burada durur, kullanıcıya sürekli spam mesaj atmaz!
+        return;
       }
 
       // 🌍 4. "DİĞER" BÖLGE KONUM ALMA AKIŞI
@@ -257,7 +256,6 @@ async function startBot() {
       if (lowerText === '!iptal') {
         const activeOrders = storeData.customerActiveOrders[sender] || [];
         if (activeOrders.length > 0) {
-          // En son verilen aktif siparişi iptal et
           const latestOrderId = activeOrders[activeOrders.length - 1];
           
           if (storeData.pendingOrders[latestOrderId]) {
@@ -389,7 +387,6 @@ async function startBot() {
           return;
         }
 
-        // Max 5 sipariş kontrolü
         if (!storeData.customerActiveOrders[sender]) storeData.customerActiveOrders[sender] = [];
         if (storeData.customerActiveOrders[sender].length >= 5) {
           await sock.sendMessage(sender, { text: `⚠️ Aynı anda en fazla *5 aktif sipariş* verebilirsiniz. Lütfen mevcut siparişlerinizin onaylanmasını veya iptal edilmesini bekleyin.` });
@@ -412,19 +409,15 @@ async function startBot() {
         storeData.customerActiveOrders[sender].push(currentOrderId);
         saveData();
         
-        // 1. Mesaj: Sipariş alındı ve süre/arama uyarısı
         const musteriMesaji = `⏳ *Siparişiniz Alındı! (Sipariş No: #${currentOrderId})*\n\n` +
           `Seçtiğiniz Menü: *${firstWord.toUpperCase()}* (${item.price} TL)\n\n` +
-          `⏱️ *Teslimat Bilgisi:* Siparişiniz ortalama *30 dakika* içinde kapınızda olacaktır. Sizi telefonla aramayacağız, lütfen kapıda bekleyin!\n\n` +
+          `⏱️ *Teslimat Bilgisi:* Siparişiniz ortalama *30 dakika* içinde kapınızda olacaktır. Kuryelerimiz sizi telefonla aramayacaktır, lütfen kapıda bekleyin!\n\n` +
           `💳 Aşağıdaki IBAN'a ödemeyi yapıp dekontu gönderin:`;
 
         await sock.sendMessage(sender, { text: musteriMesaji });
-
-        // 2. Mesaj: Sadece IBAN (Kopyalaması Kolay Ayrı Baloncuk)
         await sock.sendMessage(sender, { text: IBAN_NUMARASI });
         await sock.sendMessage(sender, { text: `📌 Alıcı / Banka: ${IBAN_SAHIBI}` });
 
-        // Admine Bildirim
         const adminBildirim = `🚨 *YENİ SİPARİŞ DÜŞTÜ! (#${currentOrderId})* 🚨\n\n` +
           `🆔 *Sipariş No:* #${currentOrderId}\n` +
           `👤 Müşteri: wa.me/${sender.split('@')[0]}\n` +
@@ -450,7 +443,7 @@ async function startBot() {
         storeData.lastGreetingTime[sender] = now;
         saveData();
 
-        let welcome = "👋 *CEO-SİPARİŞ'e Hoş Geldiniz!*\n\niss";
+        let welcome = "👋 *CEO-SİPARİŞ'e Hoş Geldiniz!*\n\n";
         if (storeData.customers[sender] && storeData.customers[sender].region) {
           welcome += `📍 Bölge: *${storeData.customers[sender].region}*\n`;
         } else {
