@@ -357,6 +357,28 @@ async function startBot() {
         return;
       }
 
+      // 🔄 DÜKKAN DEĞİŞTİRME KOMUTU (Beypazarı için)
+      if (lowerText === 'dükkan' || lowerText === 'dukkan' || lowerText === 'restoran') {
+        const userCust = storeData.customers[sender] || {};
+        if (userCust.region === 'Beypazarı') {
+          storeData.userStates[sender] = 'WAITING_BEYPAZARI_STORE';
+          saveData();
+          let storeMsg = "🏙️ *Beypazarı Restoran Seçimi (Dükkan Değiştirme):*\n\n" +
+            "1️⃣ Burger King\n" +
+            "2️⃣ Pasaport Pizza\n" +
+            "3️⃣ Popeyes\n" +
+            "4️⃣ Komagene\n" +
+            "5️⃣ Cadde Katık\n" +
+            "6️⃣ Komagene Diğer / Harici Sipariş\n\n" +
+            "_Lütfen dükkan adını yazınız (Örn: Burger King veya Pasaport Pizza)_";
+          await sock.sendMessage(sender, { text: storeMsg });
+          return;
+        } else {
+          await sock.sendMessage(sender, { text: "⚠️ Bu komut yalnızca Beypazarı bölgesinde dükkan değiştirmek içindir. Bölgenizi değiştirmek için *BÖLGE* yazabilirsiniz." });
+          return;
+        }
+      }
+
       // 🌍 6. BÖLGE SEÇİMİ VE AKIŞI
       if (lowerText === 'bölge' || lowerText === 'bolge' || lowerText === 'referans') {
         storeData.userStates[sender] = 'WAITING_REGION';
@@ -426,7 +448,7 @@ async function startBot() {
         if (matchedStore === "komagene_diger") {
           storeData.userStates[sender] = 'WAITING_BEYPAZARI_OTHER';
           saveData();
-          await sock.sendMessage(sender, { text: "📌 *Komagene Diğer / Harici Sipariş Modeü*\n\nLütfen istediğiniz menüyü ve detayları yazınız:" });
+          await sock.sendMessage(sender, { text: "📌 *Komagene Diğer / Harici Sipariş Modülü*\n\nLütfen istediğiniz menüyü ve detayları yazınız:" });
           return;
         }
 
@@ -436,7 +458,7 @@ async function startBot() {
           delete storeData.userStates[sender];
           saveData();
 
-          await sock.sendMessage(sender, { text: `✅ Restoran seçildi! Menüyü görmek için *MENÜ* yazabilirsiniz.` });
+          await sock.sendMessage(sender, { text: `✅ Restoran seçildi! Menüyü görmek için *MENÜ* yazabilirsiniz. (Dükkan değiştirmek için dilediğiniz zaman *DÜKKAN* yazabilirsiniz.)` });
         } else {
           await sock.sendMessage(sender, { text: "❌ Geçersiz dükkan adı. Lütfen listeden birini yazınız (Burger King, Pasaport Pizza, Popeyes, Komagene, Cadde Katık):" });
         }
@@ -505,11 +527,10 @@ async function startBot() {
         if (userRegion === 'Beypazarı') {
           const storeKey = userCust.beypazariStore;
           if (!storeKey || !beypazariMenus[storeKey]) {
-            await sock.sendMessage(sender, { text: "⚠️ Önce dükkan seçmelisiniz. Lütfen *BÖLGE* yazıp Beypazarı dükkanınızı seçin." });
+            await sock.sendMessage(sender, { text: "⚠️ Önce dükkan seçmelisiniz. Lütfen *BÖLGE* yazıp Beypazarı dükkanınızı seçin veya doğrudan *DÜKKAN* yazın." });
             return;
           }
 
-          let storeTitle = "";
           let itemsList = "";
           const menuObj = beypazariMenus[storeKey];
 
@@ -522,6 +543,7 @@ async function startBot() {
             itemsList + `\n` +
             `📝 *Sipariş Formatı:*\n` +
             `*Menü kodu , Ad Soyad , Numara , Adres*\n\n` +
+            `🔄 *Dükkan Değiştirmek İçin:* \`DÜKKAN\` yazabilirsiniz.\n` +
             `💳 *Önemli Not:* Beypazarı siparişlerinde yalnızca **Havale / Eft** ödeme yöntemi geçerlidir.\n` +
             `📸 Instagram: @ceosiparis`;
 
